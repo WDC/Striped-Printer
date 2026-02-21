@@ -32,8 +32,9 @@ struct HTTPResponse {
         self.body = body
     }
 
+    private static let encoder = JSONEncoder()
+
     static func json(_ value: some Encodable, status: Int = 200) -> HTTPResponse {
-        let encoder = JSONEncoder()
         let data = (try? encoder.encode(value)) ?? Data("{}".utf8)
         var response = HTTPResponse(status: status, statusText: status == 200 ? "OK" : "Error", body: data)
         response.headers["Content-Type"] = "application/json"
@@ -129,6 +130,8 @@ final class HTTPServer {
         receiveHTTPRequest(connection: connection, buffer: Data())
     }
 
+    private static let maxRequestSize = 10_485_760 // 10 MB
+
     private func receiveHTTPRequest(connection: NWConnection, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, _, isComplete, error in
             guard let self else { return }
@@ -142,6 +145,12 @@ final class HTTPServer {
             var accumulated = buffer
             if let content {
                 accumulated.append(content)
+            }
+
+            if accumulated.count > Self.maxRequestSize {
+                logger.warning("Request exceeded \(Self.maxRequestSize) bytes, dropping connection")
+                connection.cancel()
+                return
             }
 
             // Try to parse a complete HTTP request

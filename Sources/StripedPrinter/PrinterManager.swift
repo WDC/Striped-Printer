@@ -252,7 +252,7 @@ final class PrinterManager: ObservableObject {
         opQueue.maxConcurrentOperationCount = 30
         opQueue.qualityOfService = .userInitiated
 
-        let localIPs = Set(Self.getLocalIPv4Addresses())
+        let localIPs = Set(Self.getLocalNetworkInfo().addresses)
 
         for subnet in subnets {
             for hostNum in 1...254 {
@@ -354,26 +354,27 @@ final class PrinterManager: ObservableObject {
         return NetworkPrinter(name: name, host: ip, port: port)
     }
 
-    /// Get the local machine's IPv4 addresses and derive their /24 subnets.
-    nonisolated static func getLocalSubnets() -> [String] {
+    /// Get local IPv4 subnets and addresses in a single getifaddrs pass.
+    nonisolated static func getLocalNetworkInfo() -> (subnets: [String], addresses: [String]) {
         var subnets: Set<String> = []
+        var addresses: [String] = []
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return [] }
+        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return ([], []) }
         defer { freeifaddrs(ifaddr) }
 
         var current: UnsafeMutablePointer<ifaddrs>? = first
         while let ifa = current {
-            let addr = ifa.pointee.ifa_addr
-            if let addr, addr.pointee.sa_family == UInt8(AF_INET) {
+            if let addr = ifa.pointee.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) {
+                var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                getnameinfo(addr, socklen_t(addr.pointee.sa_len),
+                            &hostname, socklen_t(hostname.count),
+                            nil, 0, NI_NUMERICHOST)
+                let ip = String(cString: hostname)
+                addresses.append(ip)
+
                 let name = String(cString: ifa.pointee.ifa_name)
-                // Skip loopback and virtual interfaces
+                // Skip loopback and virtual interfaces for subnet detection
                 if name != "lo0" && !name.hasPrefix("utun") && !name.hasPrefix("bridge") {
-                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                    getnameinfo(addr, socklen_t(addr.pointee.sa_len),
-                                &hostname, socklen_t(hostname.count),
-                                nil, 0, NI_NUMERICHOST)
-                    let ip = String(cString: hostname)
-                    // Extract /24 subnet: "10.44.45.177" → "10.44.45"
                     let octets = ip.split(separator: ".")
                     if octets.count == 4 {
                         let subnet = octets[0...2].joined(separator: ".")
@@ -386,28 +387,12 @@ final class PrinterManager: ObservableObject {
             }
             current = ifa.pointee.ifa_next
         }
-        return Array(subnets)
+        return (Array(subnets), addresses)
     }
 
-    /// Get all local IPv4 addresses (for filtering self from scans)
-    nonisolated static func getLocalIPv4Addresses() -> [String] {
-        var addresses: [String] = []
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let first = ifaddr else { return [] }
-        defer { freeifaddrs(ifaddr) }
-
-        var current: UnsafeMutablePointer<ifaddrs>? = first
-        while let ifa = current {
-            if let addr = ifa.pointee.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) {
-                var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                getnameinfo(addr, socklen_t(addr.pointee.sa_len),
-                            &hostname, socklen_t(hostname.count),
-                            nil, 0, NI_NUMERICHOST)
-                addresses.append(String(cString: hostname))
-            }
-            current = ifa.pointee.ifa_next
-        }
-        return addresses
+    /// Get the local machine's IPv4 subnets (convenience wrapper).
+    nonisolated static func getLocalSubnets() -> [String] {
+        getLocalNetworkInfo().subnets
     }
 
     // MARK: - DNS Resolution
@@ -437,22 +422,83 @@ final class PrinterConnection {
     private let port: UInt16
     private let queue = DispatchQueue(label: "com.striped-printer.tcp")
 
+    // Connection pool: keyed by "host:port"
+    private static let poolLock = NSLock()
+    private static var pool: [String: NWConnection] = [:]
+    private static var poolTimers: [String: DispatchWorkItem] = [:]
+    private static let idleTimeout: TimeInterval = 30
+
     init(host: String, port: UInt16) {
         self.host = host
         self.port = port
     }
 
-    func send(data: Data, timeout: TimeInterval = 10) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let connection = NWConnection(
-                host: NWEndpoint.Host(host),
-                port: NWEndpoint.Port(rawValue: port)!,
-                using: .tcp
-            )
+    private var poolKey: String { "\(host):\(port)" }
 
+    private func getCachedConnection() -> NWConnection? {
+        Self.poolLock.lock()
+        defer { Self.poolLock.unlock() }
+        if let conn = Self.pool[poolKey], conn.state == .ready {
+            // Reset idle timer
+            Self.poolTimers[poolKey]?.cancel()
+            scheduleIdleCleanup()
+            return conn
+        }
+        // Remove stale entry
+        Self.pool.removeValue(forKey: poolKey)
+        Self.poolTimers[poolKey]?.cancel()
+        Self.poolTimers.removeValue(forKey: poolKey)
+        return nil
+    }
+
+    private func cacheConnection(_ connection: NWConnection) {
+        Self.poolLock.lock()
+        defer { Self.poolLock.unlock() }
+        Self.pool[poolKey] = connection
+        scheduleIdleCleanup()
+    }
+
+    /// Must be called with poolLock held.
+    private func scheduleIdleCleanup() {
+        let key = poolKey
+        let work = DispatchWorkItem {
+            Self.poolLock.lock()
+            if let conn = Self.pool.removeValue(forKey: key) {
+                conn.cancel()
+            }
+            Self.poolTimers.removeValue(forKey: key)
+            Self.poolLock.unlock()
+        }
+        Self.poolTimers[key] = work
+        DispatchQueue.global().asyncAfter(deadline: .now() + Self.idleTimeout, execute: work)
+    }
+
+    private func makeConnection() -> NWConnection {
+        NWConnection(
+            host: NWEndpoint.Host(host),
+            port: NWEndpoint.Port(rawValue: port)!,
+            using: .tcp
+        )
+    }
+
+    func send(data: Data, timeout: TimeInterval = 10) async throws {
+        // Try cached connection first
+        if let cached = getCachedConnection() {
+            do {
+                try await sendOnReady(connection: cached, data: data, timeout: timeout)
+                cacheConnection(cached)
+                return
+            } catch {
+                // Cached connection failed, fall through to new one
+                cached.cancel()
+            }
+        }
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let connection = makeConnection()
             var completed = false
 
-            connection.stateUpdateHandler = { state in
+            connection.stateUpdateHandler = { [weak self] state in
                 switch state {
                 case .ready:
                     connection.send(content: data, completion: .contentProcessed { error in
@@ -462,7 +508,8 @@ final class PrinterConnection {
                             connection.cancel()
                             continuation.resume(throwing: error)
                         } else {
-                            connection.cancel()
+                            self?.cacheConnection(connection)
+                            connection.stateUpdateHandler = nil
                             continuation.resume()
                         }
                     })
@@ -487,13 +534,32 @@ final class PrinterConnection {
         }
     }
 
+    /// Send data on an already-ready connection.
+    private func sendOnReady(connection: NWConnection, data: Data, timeout: TimeInterval) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            var completed = false
+
+            connection.send(content: data, completion: .contentProcessed { error in
+                guard !completed else { return }
+                completed = true
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            })
+
+            queue.asyncAfter(deadline: .now() + timeout) {
+                guard !completed else { return }
+                completed = true
+                continuation.resume(throwing: PrinterError.timeout)
+            }
+        }
+    }
+
     func sendAndReceive(data: Data?, timeout: TimeInterval = 5) async throws -> Data {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            let connection = NWConnection(
-                host: NWEndpoint.Host(host),
-                port: NWEndpoint.Port(rawValue: port)!,
-                using: .tcp
-            )
+            let connection = makeConnection()
 
             var completed = false
 

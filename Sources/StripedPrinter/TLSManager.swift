@@ -18,6 +18,7 @@ final class TLSManager {
     private var certPath: String { appSupportDir.appendingPathComponent("server.cert").path }
     private var keyPath: String { appSupportDir.appendingPathComponent("server.key").path }
     private var p12Path: String { appSupportDir.appendingPathComponent("server.p12").path }
+    private var trustedSentinelPath: String { appSupportDir.appendingPathComponent(".trusted").path }
 
     /// Get or create a SecIdentity for TLS
     func getIdentity() -> SecIdentity? {
@@ -45,6 +46,8 @@ final class TLSManager {
 
     private func generateCertificate() -> Bool {
         logger.info("Generating self-signed certificate...")
+        // Invalidate trust sentinel since we're generating a new cert
+        try? FileManager.default.removeItem(atPath: trustedSentinelPath)
 
         // Use openssl to generate cert + key, then convert to PKCS12
         let genProcess = Process()
@@ -92,7 +95,12 @@ final class TLSManager {
 
     /// Ensure the self-signed cert is trusted for SSL in the login keychain
     private func ensureCertTrusted() {
-        // Check if already trusted
+        // Fast path: sentinel file means we've already trusted this cert
+        if FileManager.default.fileExists(atPath: trustedSentinelPath) {
+            return
+        }
+
+        // Check if already trusted via security CLI
         let checkProcess = Process()
         checkProcess.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         checkProcess.arguments = ["dump-trust-settings"]
@@ -105,6 +113,7 @@ final class TLSManager {
             checkProcess.waitUntilExit()
             let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             if output.contains("127.0.0.1") {
+                FileManager.default.createFile(atPath: trustedSentinelPath, contents: nil)
                 return // Already trusted
             }
         } catch {
@@ -125,6 +134,7 @@ final class TLSManager {
             trustProcess.waitUntilExit()
             if trustProcess.terminationStatus == 0 {
                 logger.info("Certificate trusted successfully")
+                FileManager.default.createFile(atPath: trustedSentinelPath, contents: nil)
             } else {
                 logger.warning("Could not auto-trust certificate (status \(trustProcess.terminationStatus)). You may need to manually trust it.")
             }

@@ -8,9 +8,10 @@ private let logger = Logger(subsystem: "com.striped-printer", category: "API")
 final class BrowserPrintAPI {
     private let printerManager: PrinterManager
 
-    // Buffer for read responses (keyed by device UID)
-    private var readBuffers: [String: Data] = [:]
+    // Buffer for read responses (keyed by device UID, with timestamp for expiry)
+    private var readBuffers: [String: (data: Data, timestamp: Date)] = [:]
     private let bufferLock = NSLock()
+    private static let bufferExpiry: TimeInterval = 300 // 5 minutes
 
     init(printerManager: PrinterManager) {
         self.printerManager = printerManager
@@ -98,9 +99,17 @@ final class BrowserPrintAPI {
         }
     }
 
+    /// Remove read buffer entries older than 5 minutes. Must be called with bufferLock held.
+    private func pruneExpiredBuffers() {
+        let cutoff = Date().addingTimeInterval(-Self.bufferExpiry)
+        readBuffers = readBuffers.filter { $0.value.timestamp > cutoff }
+    }
+
     // MARK: - POST /read
 
     private func handleRead(_ request: HTTPRequest) async -> HTTPResponse {
+        bufferLock.withLock { pruneExpiredBuffers() }
+
         guard let readRequest = try? JSONDecoder().decode(ReadRequest.self, from: request.body) else {
             return .error("Invalid request body", status: 400)
         }

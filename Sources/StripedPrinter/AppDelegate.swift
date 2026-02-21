@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var httpServer: HTTPServer!
     private var httpsServer: HTTPServer!
     private var api: BrowserPrintAPI!
+    private var rebuildTimer: Timer?
     private var printerManager: PrinterManager {
         MainActor.assumeIsolated { PrinterManager.shared }
     }
@@ -25,11 +26,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             startServers()
 
             // Auto-scan local subnets for printers on port 9100
-            let subnets = PrinterManager.getLocalSubnets()
+            let subnets = PrinterManager.getLocalNetworkInfo().subnets
             if !subnets.isEmpty {
                 printerManager.scanSubnets(subnets)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
-                    self?.rebuildMenu()
+                    self?.scheduleMenuRebuild()
                 }
             }
         }
@@ -146,13 +147,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func scheduleMenuRebuild() {
+        rebuildTimer?.invalidate()
+        rebuildTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
+            self?.rebuildMenu()
+        }
+    }
+
     // MARK: - Menu Actions
 
     @objc private func selectDefaultPrinter(_ sender: NSMenuItem) {
         guard let uid = sender.representedObject as? String else { return }
         Task { @MainActor in
             printerManager.setDefaultPrinter(uid)
-            rebuildMenu()
+            scheduleMenuRebuild()
         }
     }
 
@@ -161,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             if let printer = printerManager.manualPrinters.first(where: { $0.host == host }) {
                 printerManager.removeManualPrinter(printer)
-                rebuildMenu()
+                scheduleMenuRebuild()
             }
         }
     }
@@ -205,7 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             Task { @MainActor in
                 printerManager.addManualPrinter(name: name, host: host, port: port)
-                rebuildMenu()
+                scheduleMenuRebuild()
                 logger.info("Added manual printer: \(name) at \(host):\(port)")
             }
         }
@@ -251,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if let button = self.statusItem.button {
                         button.image = NSImage(systemSymbolName: "printer.fill", accessibilityDescription: "Striped Printer")
                     }
-                    self.rebuildMenu()
+                    self.scheduleMenuRebuild()
                 }
             }
         }
@@ -262,7 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             printerManager.stopDiscovery()
             printerManager.startDiscovery()
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                self.rebuildMenu()
+                self.scheduleMenuRebuild()
             }
         }
     }
@@ -272,14 +280,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startServers() {
         api = BrowserPrintAPI(printerManager: printerManager)
 
+        // Start HTTP immediately so the port is available
         httpServer = HTTPServer(port: 9100)
         api.registerRoutes(on: httpServer)
-
-        let tlsManager = TLSManager()
-        if let identity = tlsManager.getIdentity() {
-            httpsServer = HTTPServer(port: 9101, useTLS: true, tlsIdentity: identity)
-            api.registerRoutes(on: httpsServer)
-        }
 
         do {
             try httpServer.start()
@@ -288,15 +291,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             logger.error("Failed to start HTTP server: \(error.localizedDescription)")
         }
 
-        if let httpsServer {
-            do {
-                try httpsServer.start()
-                logger.info("HTTPS server started on port 9101")
-            } catch {
-                logger.error("Failed to start HTTPS server: \(error.localizedDescription)")
+        // Load TLS cert and start HTTPS asynchronously (avoids blocking startup)
+        Task.detached { [weak self] in
+            let tlsManager = TLSManager()
+            guard let identity = tlsManager.getIdentity() else {
+                logger.warning("HTTPS server not started (no TLS certificate)")
+                return
             }
-        } else {
-            logger.warning("HTTPS server not started (no TLS certificate)")
+
+            await MainActor.run {
+                guard let self else { return }
+                self.httpsServer = HTTPServer(port: 9101, useTLS: true, tlsIdentity: identity)
+                self.api.registerRoutes(on: self.httpsServer)
+                do {
+                    try self.httpsServer.start()
+                    logger.info("HTTPS server started on port 9101")
+                } catch {
+                    logger.error("Failed to start HTTPS server: \(error.localizedDescription)")
+                }
+            }
         }
     }
 }
