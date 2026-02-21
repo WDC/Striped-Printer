@@ -153,12 +153,21 @@ final class PrinterManager: ObservableObject {
             }
         }
 
-        group.notify(queue: .main) { [weak self] in
-            self?.bonjourPrinters = printers
-            if !printers.isEmpty {
-                logger.info("Bonjour discovered \(printers.count) printer(s)")
-                for p in printers {
-                    logger.info("  - \(p.name) at \(p.host):\(p.port)")
+        group.notify(queue: .global(qos: .userInitiated)) { [weak self] in
+            // Verify each Bonjour-discovered printer is ZPL-compatible via ~hi probe.
+            // This filters out non-Zebra printers (Brother, HP, Canon, etc.) that also
+            // advertise _pdl-datastream._tcp.
+            let verified = printers.compactMap { printer -> NetworkPrinter? in
+                PrinterManager.probePrinter(ip: printer.host, port: printer.port)
+            }
+
+            Task { @MainActor [weak self] in
+                self?.bonjourPrinters = verified
+                if !verified.isEmpty {
+                    logger.info("Bonjour discovered \(verified.count) ZPL printer(s)")
+                    for p in verified {
+                        logger.info("  - \(p.name) at \(p.host):\(p.port)")
+                    }
                 }
             }
         }
@@ -322,7 +331,8 @@ final class PrinterManager: ObservableObject {
         }
     }
 
-    /// Probe a single IP:port using POSIX sockets. Returns a NetworkPrinter if port is open.
+    /// Probe a single IP:port for a Zebra/ZPL printer using POSIX sockets.
+    /// Returns a NetworkPrinter only if the host responds to `~hi` with a valid Zebra identification.
     nonisolated private static func probePrinter(ip: String, port: UInt16) -> NetworkPrinter? {
         let sock = socket(AF_INET, SOCK_STREAM, 0)
         guard sock >= 0 else { return nil }
@@ -375,18 +385,24 @@ final class PrinterManager: ObservableObject {
         var buffer = [UInt8](repeating: 0, count: 4096)
         let bytesRead = recv(sock, &buffer, buffer.count, 0)
 
+        // Require a valid Zebra ~hi response (comma-delimited model/firmware/serial info).
+        // Non-Zebra printers (Brother, HP, etc.) won't respond meaningfully to ~hi.
+        guard bytesRead > 0,
+              let response = String(bytes: buffer[0..<bytesRead], encoding: .utf8) else { return nil }
+
+        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\u{02}\u{03}"))
+
+        // Zebra printers respond with comma-separated fields (model, firmware, serial, etc.)
+        guard trimmed.contains(",") else { return nil }
+
         var name = ip
-        if bytesRead > 0 {
-            let response = String(bytes: buffer[0..<bytesRead], encoding: .utf8) ?? ""
-            let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "\u{02}\u{03}"))
-            if let firstLine = trimmed.components(separatedBy: "\r\n").first,
-               !firstLine.isEmpty {
-                let parts = firstLine.components(separatedBy: ",")
-                let model = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
-                if !model.isEmpty {
-                    name = "\(model) (\(ip))"
-                }
+        if let firstLine = trimmed.components(separatedBy: "\r\n").first,
+           !firstLine.isEmpty {
+            let parts = firstLine.components(separatedBy: ",")
+            let model = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !model.isEmpty {
+                name = "\(model) (\(ip))"
             }
         }
 
