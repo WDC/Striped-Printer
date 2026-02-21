@@ -30,6 +30,16 @@ class StripedPrinter < Formula
            "-f", prefix/"StripedPrinter.app"
   end
 
+  def caveats
+    <<~EOS
+      To open .zpl files with Striped Printer by default:
+        brew install duti
+        duti -s com.striped-printer .zpl all
+
+      Or right-click any .zpl file → Open With → Striped Printer → Always Open With.
+    EOS
+  end
+
   service do
     run [opt_bin/"StripedPrinter"]
     keep_alive true
