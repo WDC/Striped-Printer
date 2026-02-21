@@ -22,18 +22,37 @@ Zebra's [Browser Print](https://www.zebra.com/us/en/software/printer-software/br
 - **Zero dependencies** — pure Swift using Network.framework, Security.framework, and AppKit. No SPM packages, no CocoaPods
 - **CORS + Private Network Access** — handles Chrome's `Access-Control-Allow-Private-Network` preflight requirements
 
-## Quick Start
+## Installation
+
+### Homebrew (recommended)
 
 ```bash
-# Build
-swift build -c release
-
-# Code-sign (required for LaunchAgent / full network access)
-codesign --force --sign - .build/release/StripedPrinter
-
-# Run
-.build/release/StripedPrinter
+brew install WDC/tap/striped-printer
+brew services start striped-printer
 ```
+
+### Download Binary
+
+Grab the latest notarized binary from [GitHub Releases](https://github.com/WDC/Striped-Printer/releases):
+
+```bash
+curl -L -o /usr/local/bin/StripedPrinter \
+  https://github.com/WDC/Striped-Printer/releases/latest/download/StripedPrinter
+chmod +x /usr/local/bin/StripedPrinter
+```
+
+### Build from Source
+
+```bash
+git clone https://github.com/WDC/Striped-Printer.git
+cd Striped-Printer
+make build
+make install
+```
+
+This builds a universal binary (arm64 + x86_64), installs it to `/usr/local/bin`, and sets up a LaunchAgent to start at login.
+
+## Quick Start
 
 A printer icon appears in your menu bar. Striped Printer will:
 
@@ -42,47 +61,15 @@ A printer icon appears in your menu bar. Striped Printer will:
 3. Scan your local subnets for Zebra printers on port 9100
 4. Serve the Browser Print API to your web applications
 
-## Launch at Login
-
-Install the LaunchAgent to start automatically:
+## Uninstall
 
 ```bash
-# Build and sign
-swift build -c release
-codesign --force --sign - .build/release/StripedPrinter
+# Homebrew
+brew services stop striped-printer
+brew uninstall striped-printer
 
-# Install LaunchAgent (edit the path if your repo is elsewhere)
-cat > ~/Library/LaunchAgents/com.striped-printer.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.striped-printer</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/path/to/striped-printer/.build/release/StripedPrinter</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/striped-printer.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/striped-printer.log</string>
-</dict>
-</plist>
-EOF
-
-# Load it
-launchctl load ~/Library/LaunchAgents/com.striped-printer.plist
-```
-
-To stop:
-
-```bash
-launchctl unload ~/Library/LaunchAgents/com.striped-printer.plist
+# Manual / make
+make uninstall
 ```
 
 ## API Compatibility
