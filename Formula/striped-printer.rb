@@ -10,6 +10,7 @@ class StripedPrinter < Formula
 
   def install
     system "swift", "build", "-c", "release", "--disable-sandbox"
+    system "codesign", "--force", "--sign", "-", ".build/release/StripedPrinter"
     bin.install ".build/release/StripedPrinter"
   end
 
