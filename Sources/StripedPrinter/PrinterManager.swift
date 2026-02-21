@@ -190,7 +190,11 @@ final class PrinterManager: ObservableObject {
 
     func loadManualPrinters() {
         let url = configURL.appendingPathComponent("printers.json")
-        guard let data = try? Data(contentsOf: url) else { return }
+        guard let data = try? Data(contentsOf: url) else {
+            // No printers.json yet — try legacy migration
+            migrateLegacyConfig()
+            return
+        }
 
         struct SavedPrinter: Codable {
             let name: String
@@ -202,9 +206,44 @@ final class PrinterManager: ObservableObject {
             manualPrinters = saved.map { NetworkPrinter(name: $0.name, host: $0.host, port: $0.port) }
         }
 
+        // Migrate legacy config if manualPrinters is still empty
+        if manualPrinters.isEmpty {
+            migrateLegacyConfig()
+        }
+
         // Load default printer UID
         let defaultURL = configURL.appendingPathComponent("default.txt")
         defaultPrinterUID = try? String(contentsOf: defaultURL, encoding: .utf8)
+    }
+
+    /// Migrate printers from legacy iZPL ~/.zplprinters config file.
+    private func migrateLegacyConfig() {
+        let legacyPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".zplprinters")
+        guard FileManager.default.fileExists(atPath: legacyPath.path) else { return }
+
+        guard let contents = try? String(contentsOf: legacyPath, encoding: .utf8) else { return }
+
+        let lines = contents.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        guard !lines.isEmpty else { return }
+
+        for line in lines {
+            let parts = line.components(separatedBy: ":")
+            guard parts.count >= 2,
+                  let port = UInt16(parts[1]) else { continue }
+            let host = parts[0]
+            let name = parts.count >= 3 ? parts[2...].joined(separator: ":") : host
+            addManualPrinter(name: name, host: host, port: port)
+        }
+
+        // Rename so migration only runs once
+        let migratedPath = legacyPath.deletingLastPathComponent()
+            .appendingPathComponent(".zplprinters.migrated")
+        try? FileManager.default.moveItem(at: legacyPath, to: migratedPath)
+        logger.info("Migrated \(lines.count) printer(s) from ~/.zplprinters")
     }
 
     private func saveManualPrinters() {

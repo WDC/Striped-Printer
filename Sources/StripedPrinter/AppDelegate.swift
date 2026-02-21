@@ -275,6 +275,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    // MARK: - File Open Handling
+
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        sendZPLFile(filename)
+        return true
+    }
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        for filename in filenames {
+            sendZPLFile(filename)
+        }
+    }
+
+    private func sendZPLFile(_ filepath: String) {
+        guard let data = FileManager.default.contents(atPath: filepath) else {
+            let alert = NSAlert()
+            alert.messageText = "Cannot Read File"
+            alert.informativeText = "Could not read \(filepath)"
+            alert.alertStyle = .critical
+            alert.runModal()
+            return
+        }
+
+        Task { @MainActor in
+            let printers = printerManager.allPrinters
+            guard !printers.isEmpty else {
+                let alert = NSAlert()
+                alert.messageText = "No Printers Found"
+                alert.informativeText = "Add a printer using the menu bar icon, or scan your network first."
+                alert.alertStyle = .warning
+                alert.runModal()
+                return
+            }
+
+            let printer: NetworkPrinter
+            if printers.count == 1 {
+                printer = printers[0]
+            } else {
+                guard let picked = showPrinterPicker(printers: printers, defaultUID: printerManager.defaultPrinterUID) else { return }
+                printer = picked
+            }
+
+            let filename = (filepath as NSString).lastPathComponent
+            do {
+                let conn = PrinterConnection(host: printer.host, port: printer.port)
+                try await conn.send(data: data)
+                logger.info("Sent \(filename) to \(printer.name) (\(printer.host):\(printer.port))")
+
+                let alert = NSAlert()
+                alert.messageText = "Sent to \(printer.name)"
+                alert.informativeText = "\(filename) → \(printer.host):\(printer.port)"
+                alert.alertStyle = .informational
+                alert.runModal()
+            } catch {
+                logger.error("Failed to send \(filename): \(error.localizedDescription)")
+
+                let alert = NSAlert()
+                alert.messageText = "Print Failed"
+                alert.informativeText = "Could not send \(filename) to \(printer.name):\n\(error.localizedDescription)"
+                alert.alertStyle = .critical
+                alert.runModal()
+            }
+        }
+    }
+
+    private func showPrinterPicker(printers: [NetworkPrinter], defaultUID: String?) -> NetworkPrinter? {
+        let alert = NSAlert()
+        alert.messageText = "Select Printer"
+        alert.informativeText = "Choose which printer to send this file to:"
+        alert.addButton(withTitle: "Print")
+        alert.addButton(withTitle: "Cancel")
+
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 300, height: 28), pullsDown: false)
+        for printer in printers {
+            popup.addItem(withTitle: "\(printer.name) — \(printer.host):\(printer.port)")
+        }
+
+        // Pre-select the default printer
+        if let defaultUID,
+           let idx = printers.firstIndex(where: { $0.device.uid == defaultUID }) {
+            popup.selectItem(at: idx)
+        }
+
+        alert.accessoryView = popup
+
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+
+        guard response == .alertFirstButtonReturn else { return nil }
+        let idx = popup.indexOfSelectedItem
+        guard idx >= 0, idx < printers.count else { return nil }
+        return printers[idx]
+    }
+
     // MARK: - Servers
 
     private func startServers() {

@@ -6,7 +6,7 @@
     <string>com.striped-printer</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/david/striped-printer/.build/release/StripedPrinter</string>
+        <string>/Users/david/striped-printer/.build/StripedPrinter.app/Contents/MacOS/StripedPrinter</string>
     </array>
     <key>RunAtLoad</key>
     <true/>

@@ -1,7 +1,9 @@
 BINARY_NAME := StripedPrinter
 BUILD_DIR := .build
 RELEASE_BINARY := $(BUILD_DIR)/$(BINARY_NAME)
-INSTALL_DIR := /usr/local/bin
+APP_BUNDLE := $(BUILD_DIR)/$(BINARY_NAME).app
+APP_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME)
+INSTALL_DIR := /Applications
 PLIST_NAME := com.striped-printer.plist
 PLIST_SRC := $(PLIST_NAME)
 PLIST_DEST := $(HOME)/Library/LaunchAgents/$(PLIST_NAME)
@@ -21,25 +23,37 @@ build:
 	@echo "Built universal binary: $(RELEASE_BINARY)"
 	@file $(RELEASE_BINARY)
 
+# --- App Bundle ---
+
+.PHONY: bundle
+bundle: build
+	mkdir -p $(APP_BUNDLE)/Contents/MacOS
+	mkdir -p $(APP_BUNDLE)/Contents/Resources
+	cp $(RELEASE_BINARY) $(APP_BINARY)
+	cp Info.plist $(APP_BUNDLE)/Contents/Info.plist
+	cp AppIcon.icns $(APP_BUNDLE)/Contents/Resources/AppIcon.icns
+	@echo "Created $(APP_BUNDLE)"
+
 # --- Code Sign ---
 
 .PHONY: sign
 sign:
 	codesign --force --options runtime \
 		--sign "$(SIGNING_IDENTITY)" \
-		$(RELEASE_BINARY)
+		$(APP_BUNDLE)
 	@echo "Signed with Developer ID + hardened runtime"
-	@codesign -dv $(RELEASE_BINARY) 2>&1 | head -5
+	@codesign -dv $(APP_BUNDLE) 2>&1 | head -5
 
 # --- Notarize ---
 
 .PHONY: notarize
 notarize:
 	rm -f $(BUILD_DIR)/$(BINARY_NAME).zip
-	zip -j $(BUILD_DIR)/$(BINARY_NAME).zip $(RELEASE_BINARY)
+	cd $(BUILD_DIR) && zip -r $(BINARY_NAME).zip $(BINARY_NAME).app
 	xcrun notarytool submit $(BUILD_DIR)/$(BINARY_NAME).zip \
 		--keychain-profile "$(NOTARIZE_PROFILE)" --wait
-	@echo "Notarization complete. Bare binaries cannot be stapled — Gatekeeper checks online."
+	xcrun stapler staple $(APP_BUNDLE)
+	@echo "Notarization complete and stapled"
 
 # --- GitHub Release ---
 
@@ -49,13 +63,15 @@ ifndef VERSION
 	$(error VERSION is required. Usage: make release VERSION=1.0.0)
 endif
 	@echo "==> Building v$(VERSION)..."
-	$(MAKE) build
+	$(MAKE) bundle
 	$(MAKE) sign
 	$(MAKE) notarize
+	rm -f $(BUILD_DIR)/$(BINARY_NAME).zip
+	cd $(BUILD_DIR) && zip -r $(BINARY_NAME).zip $(BINARY_NAME).app
 	git tag -a "v$(VERSION)" -m "v$(VERSION)"
 	git push origin "v$(VERSION)"
 	gh release create "v$(VERSION)" \
-		$(RELEASE_BINARY) \
+		$(BUILD_DIR)/$(BINARY_NAME).zip \
 		--title "Striped Printer v$(VERSION)" \
 		--generate-notes
 	@echo "Released v$(VERSION)"
@@ -64,14 +80,17 @@ endif
 
 .PHONY: install
 install:
-	@if [ ! -f $(RELEASE_BINARY) ]; then \
-		echo "Binary not found. Run 'make build' first."; \
+	@if [ ! -d $(APP_BUNDLE) ]; then \
+		echo "App bundle not found. Run 'make bundle' first."; \
 		exit 1; \
 	fi
 	-launchctl bootout gui/$$(id -u) $(PLIST_DEST) 2>/dev/null
-	cp $(RELEASE_BINARY) $(INSTALL_DIR)/$(BINARY_NAME)
-	@echo "Installed $(INSTALL_DIR)/$(BINARY_NAME)"
-	sed 's|/Users/david/striped-printer/.build/release/StripedPrinter|$(INSTALL_DIR)/$(BINARY_NAME)|' \
+	rm -rf $(INSTALL_DIR)/$(BINARY_NAME).app
+	cp -R $(APP_BUNDLE) $(INSTALL_DIR)/$(BINARY_NAME).app
+	@echo "Installed $(INSTALL_DIR)/$(BINARY_NAME).app"
+	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f $(INSTALL_DIR)/$(BINARY_NAME).app
+	@echo "Registered with Launch Services (.zpl file association)"
+	sed 's|/Users/david/striped-printer/.build/StripedPrinter.app/Contents/MacOS/StripedPrinter|$(INSTALL_DIR)/$(BINARY_NAME).app/Contents/MacOS/$(BINARY_NAME)|' \
 		$(PLIST_SRC) > $(PLIST_DEST)
 	launchctl bootstrap gui/$$(id -u) $(PLIST_DEST)
 	@echo "LaunchAgent loaded — $(BINARY_NAME) is running"
@@ -82,7 +101,7 @@ install:
 uninstall:
 	-launchctl bootout gui/$$(id -u) $(PLIST_DEST) 2>/dev/null
 	rm -f $(PLIST_DEST)
-	rm -f $(INSTALL_DIR)/$(BINARY_NAME)
+	rm -rf $(INSTALL_DIR)/$(BINARY_NAME).app
 	@echo "Uninstalled $(BINARY_NAME)"
 
 # --- Clean ---
@@ -90,5 +109,5 @@ uninstall:
 .PHONY: clean
 clean:
 	swift package clean
-	rm -f $(RELEASE_BINARY) $(BUILD_DIR)/$(BINARY_NAME).zip
+	rm -rf $(RELEASE_BINARY) $(BUILD_DIR)/$(BINARY_NAME).zip $(APP_BUNDLE)
 	@echo "Cleaned build artifacts"

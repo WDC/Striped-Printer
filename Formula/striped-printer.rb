@@ -10,8 +10,24 @@ class StripedPrinter < Formula
 
   def install
     system "swift", "build", "-c", "release", "--disable-sandbox"
-    system "codesign", "--force", "--sign", "-", ".build/release/StripedPrinter"
-    bin.install ".build/release/StripedPrinter"
+
+    # Create app bundle for .zpl file association and Launch Services
+    app_dir = prefix/"StripedPrinter.app/Contents"
+    (app_dir/"MacOS").mkpath
+    (app_dir/"Resources").mkpath
+    (app_dir/"MacOS").install ".build/release/StripedPrinter"
+    app_dir.install "Info.plist"
+    (app_dir/"Resources").install "AppIcon.icns"
+    system "codesign", "--force", "--sign", "-", prefix/"StripedPrinter.app"
+
+    # Symlink binary so brew services and PATH work
+    bin.install_symlink app_dir/"MacOS/StripedPrinter"
+  end
+
+  def post_install
+    # Register with Launch Services for .zpl file association
+    system "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister",
+           "-f", prefix/"StripedPrinter.app"
   end
 
   service do
@@ -22,7 +38,6 @@ class StripedPrinter < Formula
   end
 
   test do
-    # Verify the binary runs and prints version info
     assert_match "StripedPrinter", shell_output("file #{bin}/StripedPrinter")
   end
 end
