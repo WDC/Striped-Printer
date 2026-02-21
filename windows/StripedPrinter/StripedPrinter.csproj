@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon Condition="Exists('Resources\printer.ico')">Resources\printer.ico</ApplicationIcon>
+    <AssemblyName>StripedPrinter</AssemblyName>
+    <RootNamespace>StripedPrinter</RootNamespace>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <Version>1.0.0</Version>
+    <Company>WDC</Company>
+    <Product>Striped Printer</Product>
+    <Description>Drop-in replacement for Zebra Browser Print. Bridges web browser requests to Zebra thermal printers.</Description>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('Resources\printer.ico')">
+    <EmbeddedResource Include="Resources\printer.ico" />
+  </ItemGroup>
+
+</Project>
