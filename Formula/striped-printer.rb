@@ -1,8 +1,8 @@
 class StripedPrinter < Formula
   desc "Native macOS replacement for Zebra Browser Print"
   homepage "https://github.com/WDC/Striped-Printer"
-  url "https://github.com/WDC/Striped-Printer/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "a8bdd8623a9e649c53fceafd65f8b3441411fde3782c908c09a4ff44851d3896"
+  url "https://github.com/WDC/Striped-Printer/archive/refs/tags/v1.1.0.tar.gz"
+  sha256 "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed"
   license "MIT"
 
   depends_on xcode: ["14.0", :build]

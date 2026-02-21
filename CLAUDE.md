@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Striped Printer is a native macOS menu bar app that replaces Zebra Browser Print. It runs an HTTP server on port 9100 (and HTTPS on 9101) that implements the same API the Browser Print JavaScript SDK expects, then forwards raw ZPL to network Zebra printers over TCP 9100.
+Striped Printer is a native macOS menu bar app that replaces both Zebra Browser Print and iZPL. It runs an HTTP server on port 9100 (and HTTPS on 9101) that implements the same API the Browser Print JavaScript SDK expects, then forwards raw ZPL to network Zebra printers over TCP 9100. It also handles `.zpl` files directly — double-click to send to a printer.
 
 ## Build & Run
 
@@ -10,29 +10,43 @@ Striped Printer is a native macOS menu bar app that replaces Zebra Browser Print
 # Debug build
 swift build
 
-# Release build
-swift build -c release
+# App bundle (release universal binary + .app structure)
+make bundle
 
-# Code-sign (needed for LaunchAgent and full network access)
-codesign --force --sign - .build/release/StripedPrinter
+# Run from bundle
+open .build/StripedPrinter.app
 
-# Run
-.build/release/StripedPrinter
+# Or run the debug binary directly
+.build/debug/StripedPrinter
 ```
 
 The app runs as a menu bar item (printer icon). Quit via the menu bar or `pkill StripedPrinter`.
+
+### Release workflow
+
+```bash
+make release VERSION=X.Y.Z   # build → bundle → sign → notarize → tag → GitHub release
+```
+
+Then update the Homebrew tap (`WDC/homebrew-tap`) with the new version and SHA256.
 
 ## Project Structure
 
 ```
 Sources/StripedPrinter/
 ├── main.swift              # Entry point — creates NSApplication, sets AppDelegate, runs
-├── AppDelegate.swift       # Menu bar UI, status item, user-facing actions (add/remove/scan)
+├── AppDelegate.swift       # Menu bar UI, status item, .zpl file open handling, printer picker
 ├── Models.swift            # Data models: PrinterDevice, NetworkPrinter, API request/response types
 ├── HTTPServer.swift        # Lightweight HTTP/1.1 server built on NWListener (Network.framework)
 ├── BrowserPrintAPI.swift   # Browser Print API endpoint handlers (/default, /available, /write, etc.)
 ├── PrinterManager.swift    # Printer discovery (Bonjour + subnet scanner), TCP connections, persistence
 ├── TLSManager.swift        # Self-signed cert generation (openssl), PKCS12 import, keychain trust
+
+Info.plist                  # App bundle metadata, .zpl file association (CFBundleDocumentTypes)
+AppIcon.icns                # App icon (reused from legacy iZPL)
+Makefile                    # Build, bundle, sign, notarize, install, release targets
+Formula/striped-printer.rb  # Homebrew formula
+com.striped-printer.plist   # LaunchAgent template
 ```
 
 No external dependencies. Uses only Apple frameworks: AppKit, Network, Security, Foundation.
@@ -43,6 +57,9 @@ No external dependencies. Uses only Apple frameworks: AppKit, Network, Security,
 - **PrinterManager** is `@MainActor` and maintains three separate printer arrays: `bonjourPrinters`, `scannedPrinters`, `manualPrinters`. The `allPrinters` computed property deduplicates by host+port.
 - **Subnet scanner** uses POSIX sockets (`socket` → non-blocking `connect` → `poll` → `send ~hi\r\n` → `recv`) on an `OperationQueue` (max 30 concurrent). NWConnection was unreliable for mass probing.
 - **TLS** generates a self-signed cert via openssl CLI, converts to PKCS12, loads via `SecPKCS12Import`, and auto-trusts in the login keychain for browser compatibility.
+- **File handling** — `application(_:openFile:)` and `application(_:openFiles:)` read `.zpl` files, show a printer picker (NSAlert + NSPopUpButton) if multiple printers exist, and send via `PrinterConnection`. The app stays running after sending.
+- **Legacy migration** — `PrinterManager.migrateLegacyConfig()` imports `~/.zplprinters` (iZPL format: `IP:PORT:NAME`) into `manualPrinters` on first launch, then renames the file to `.zplprinters.migrated`.
+- **App bundle** — `make bundle` creates `.build/StripedPrinter.app` with `Info.plist` (`.zpl` document type) and `AppIcon.icns`. Required for Launch Services file association. The Homebrew formula also builds the `.app` structure.
 
 ## Testing the API
 
@@ -88,7 +105,7 @@ Default printer UID is saved in `~/Library/Application Support/StripedPrinter/de
 
 ## LaunchAgent
 
-Installed at `~/Library/LaunchAgents/com.striped-printer.plist`. Manage with:
+Installed at `~/Library/LaunchAgents/com.striped-printer.plist`. The plist points to the binary inside the app bundle. Manage with:
 
 ```bash
 launchctl load ~/Library/LaunchAgents/com.striped-printer.plist
@@ -97,7 +114,17 @@ launchctl unload ~/Library/LaunchAgents/com.striped-printer.plist
 
 Logs go to `/tmp/striped-printer.log`.
 
-**Important:** The binary must be code-signed (`codesign --force --sign -`) for the subnet scanner to work when launched via launchd. Without signing, macOS blocks outbound socket connections from LaunchAgent processes.
+**Important:** The app bundle must be code-signed (`codesign --force --sign -`) for the subnet scanner to work when launched via launchd. Without signing, macOS blocks outbound socket connections from LaunchAgent processes.
+
+## ZPL File Handling
+
+Striped Printer registers as the macOS handler for `.zpl` files via `CFBundleDocumentTypes` in `Info.plist`. When a `.zpl` file is opened:
+
+1. If no printers are known → shows "No Printers Found" alert
+2. If one printer → sends immediately
+3. If multiple printers → shows a picker dialog (pre-selects the default printer)
+
+Test with: `open -a .build/StripedPrinter.app /tmp/test.zpl`
 
 ## Browser Print API Compatibility
 

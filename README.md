@@ -16,6 +16,7 @@ Zebra's [Browser Print](https://www.zebra.com/us/en/software/printer-software/br
 ## Features
 
 - **Drop-in compatible** — implements the full Browser Print HTTP API (`/default`, `/available`, `/config`, `/write`, `/read`)
+- **Double-click `.zpl` files** — registers as the macOS handler for `.zpl` files, shows a printer picker, and sends directly
 - **Auto-discovery** — finds Zebra printers via Bonjour and active subnet scanning with `~hi` identification
 - **HTTPS support** — self-signed TLS on port 9101 for HTTPS-hosted web apps, auto-trusted in your login keychain
 - **Menu bar app** — lightweight status item with printer list, manual add, network scan, and default printer selection
@@ -31,26 +32,24 @@ brew install WDC/tap/striped-printer
 brew services start striped-printer
 ```
 
-### Download Binary
+### Download
 
-Grab the latest notarized binary from [GitHub Releases](https://github.com/WDC/Striped-Printer/releases):
+Grab the latest notarized app from [GitHub Releases](https://github.com/WDC/Striped-Printer/releases):
 
-```bash
-curl -L -o /usr/local/bin/StripedPrinter \
-  https://github.com/WDC/Striped-Printer/releases/latest/download/StripedPrinter
-chmod +x /usr/local/bin/StripedPrinter
-```
+1. Download `StripedPrinter.zip`
+2. Unzip and move `StripedPrinter.app` to `/Applications/`
+3. Open it — it will appear in your menu bar
 
 ### Build from Source
 
 ```bash
 git clone https://github.com/WDC/Striped-Printer.git
 cd Striped-Printer
-make build
+make bundle
 make install
 ```
 
-This builds a universal binary (arm64 + x86_64), installs it to `/usr/local/bin`, and sets up a LaunchAgent to start at login.
+This builds a universal binary (arm64 + x86_64), creates an app bundle, installs it to `/Applications/`, registers `.zpl` file association, and sets up a LaunchAgent to start at login.
 
 ## Quick Start
 
@@ -60,6 +59,12 @@ A printer icon appears in your menu bar. Striped Printer will:
 2. Discover printers via Bonjour (`_pdl-datastream._tcp`)
 3. Scan your local subnets for Zebra printers on port 9100
 4. Serve the Browser Print API to your web applications
+
+You can also double-click any `.zpl` file to send it directly to a printer. If multiple printers are available, a picker dialog appears.
+
+## Migrating from iZPL / ZPL Printer
+
+If you previously used iZPL (ZPL Printer), Striped Printer will automatically import your printers from `~/.zplprinters` on first launch. The old config file is renamed to `~/.zplprinters.migrated`.
 
 ## Uninstall
 
