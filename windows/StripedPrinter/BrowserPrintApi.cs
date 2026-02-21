@@ -36,7 +36,7 @@ internal sealed class BrowserPrintApi
 
     private Task<HttpResponse> HandleDefault(HttpRequest request)
     {
-        var type = request.QueryParams.GetValueOrDefault("type", "printer");
+        var type = request.QueryParams.TryGetValue("type", out var t) ? t : "printer";
 
         if (type == "printer")
         {

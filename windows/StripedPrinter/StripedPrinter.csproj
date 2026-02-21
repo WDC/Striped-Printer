@@ -4,6 +4,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
     <ApplicationIcon Condition="Exists('Resources\printer.ico')">Resources\printer.ico</ApplicationIcon>
     <AssemblyName>StripedPrinter</AssemblyName>
     <RootNamespace>StripedPrinter</RootNamespace>

@@ -21,7 +21,7 @@ internal sealed class HttpRequest
     public Dictionary<string, string> QueryParams { get; init; } = new();
     public Dictionary<string, string> Headers { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public byte[] Body { get; init; } = [];
-    public string? Origin => Headers.GetValueOrDefault("origin");
+    public string? Origin => Headers.TryGetValue("origin", out var o) ? o : null;
 
     public string PathOnly => Path.Split('?')[0];
 }
