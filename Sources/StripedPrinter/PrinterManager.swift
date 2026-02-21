@@ -331,9 +331,42 @@ final class PrinterManager: ObservableObject {
         }
     }
 
+    /// Check if a host has a Zebra discovery service on UDP 4201.
+    /// Zebra printers listen on this port; non-Zebra printers (Brother, HP, etc.) do not.
+    /// Must pass before sending ANY data to TCP 9100 to avoid triggering prints on non-Zebra devices.
+    nonisolated private static func hasZebraDiscoveryPort(ip: String) -> Bool {
+        let sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        guard sock >= 0 else { return false }
+        defer { close(sock) }
+
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = UInt16(4201).bigEndian
+        inet_pton(AF_INET, ip, &addr.sin_addr)
+
+        // Send a discovery probe
+        var probe: UInt8 = 0
+        let sent = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                sendto(sock, &probe, 1, 0, sockPtr, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard sent > 0 else { return false }
+
+        // Wait for response (1 second timeout)
+        var pfd = pollfd(fd: sock, events: Int16(POLLIN), revents: 0)
+        let pollResult = poll(&pfd, 1, 1000)
+        return pollResult > 0 && (pfd.revents & Int16(POLLIN) != 0)
+    }
+
     /// Probe a single IP:port for a Zebra/ZPL printer using POSIX sockets.
-    /// Returns a NetworkPrinter only if the host responds to `~hi` with a valid Zebra identification.
+    /// First verifies UDP 4201 (Zebra discovery port) to avoid sending data to non-Zebra devices,
+    /// then confirms with `~hi` on TCP 9100 for model identification.
     nonisolated private static func probePrinter(ip: String, port: UInt16) -> NetworkPrinter? {
+        // Gate: verify Zebra discovery port before touching TCP 9100.
+        // Non-Zebra printers (e.g. Brother MFCs) will print raw data sent to port 9100.
+        guard hasZebraDiscoveryPort(ip: ip) else { return nil }
+
         let sock = socket(AF_INET, SOCK_STREAM, 0)
         guard sock >= 0 else { return nil }
         defer { close(sock) }

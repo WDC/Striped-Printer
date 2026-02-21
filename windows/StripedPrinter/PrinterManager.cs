@@ -352,13 +352,45 @@ internal sealed class PrinterManager
     }
 
     /// <summary>
-    /// Probe a single IP:port. Returns a NetworkPrinter if port is open.
-    /// Port of Swift probePrinter() using Socket.ConnectAsync with timeout.
+    /// Check if a host has a Zebra discovery service on UDP 4201.
+    /// Zebra printers listen on this port; non-Zebra printers (Brother, HP, etc.) do not.
+    /// Must pass before sending ANY data to TCP 9100 to avoid triggering prints on non-Zebra devices.
+    /// </summary>
+    private static async Task<bool> HasZebraDiscoveryPortAsync(string ip)
+    {
+        try
+        {
+            using var udp = new UdpClient();
+            var endpoint = new IPEndPoint(IPAddress.Parse(ip), 4201);
+
+            // Send a discovery probe
+            await udp.SendAsync(new byte[] { 0 }, 1, endpoint);
+
+            // Wait for response (1 second timeout)
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            var result = await udp.ReceiveAsync(cts.Token);
+            return result.Buffer.Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Probe a single IP:port for a Zebra/ZPL printer.
+    /// First verifies UDP 4201 (Zebra discovery port) to avoid sending data to non-Zebra devices,
+    /// then confirms with ~hi on TCP 9100 for model identification.
     /// </summary>
     private static async Task<NetworkPrinter?> ProbePrinterAsync(string ip, ushort port)
     {
         try
         {
+            // Gate: verify Zebra discovery port before touching TCP 9100.
+            // Non-Zebra printers (e.g. Brother MFCs) will print raw data sent to port 9100.
+            if (!await HasZebraDiscoveryPortAsync(ip))
+                return null;
+
             using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
 
             // Connect with 1s timeout
@@ -392,19 +424,24 @@ internal sealed class PrinterManager
                 bytesRead = 0;
             }
 
+            // Require a valid Zebra ~hi response (comma-delimited model/firmware/serial info).
+            // Non-Zebra printers won't respond meaningfully to ~hi.
+            if (bytesRead <= 0) return null;
+
+            var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+            var trimmed = response.Trim().Trim('\x02', '\x03');
+
+            // Zebra printers respond with comma-separated fields (model, firmware, serial, etc.)
+            if (!trimmed.Contains(',')) return null;
+
             var name = ip;
-            if (bytesRead > 0)
+            var firstLine = trimmed.Split("\r\n")[0];
+            if (!string.IsNullOrEmpty(firstLine))
             {
-                var response = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                var trimmed = response.Trim().Trim('\x02', '\x03');
-                var firstLine = trimmed.Split("\r\n")[0];
-                if (!string.IsNullOrEmpty(firstLine))
-                {
-                    var parts = firstLine.Split(',');
-                    var model = parts[0].Trim();
-                    if (!string.IsNullOrEmpty(model))
-                        name = $"{model} ({ip})";
-                }
+                var parts = firstLine.Split(',');
+                var model = parts[0].Trim();
+                if (!string.IsNullOrEmpty(model))
+                    name = $"{model} ({ip})";
             }
 
             return new NetworkPrinter(name, ip, port);
