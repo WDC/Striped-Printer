@@ -4,9 +4,6 @@ RELEASE_BINARY := $(BUILD_DIR)/$(BINARY_NAME)
 APP_BUNDLE := $(BUILD_DIR)/$(BINARY_NAME).app
 APP_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(BINARY_NAME)
 INSTALL_DIR := /Applications
-PLIST_NAME := com.striped-printer.plist
-PLIST_SRC := $(PLIST_NAME)
-PLIST_DEST := $(HOME)/Library/LaunchAgents/$(PLIST_NAME)
 SIGNING_IDENTITY := Developer ID Application: David Lemcoe (3Y4684F72Z)
 NOTARIZE_PROFILE := AC_PASSWORD
 
@@ -84,23 +81,20 @@ install:
 		echo "App bundle not found. Run 'make bundle' first."; \
 		exit 1; \
 	fi
-	-launchctl bootout gui/$$(id -u) $(PLIST_DEST) 2>/dev/null
+	-pkill -f $(INSTALL_DIR)/$(BINARY_NAME).app 2>/dev/null
 	rm -rf $(INSTALL_DIR)/$(BINARY_NAME).app
 	cp -R $(APP_BUNDLE) $(INSTALL_DIR)/$(BINARY_NAME).app
 	@echo "Installed $(INSTALL_DIR)/$(BINARY_NAME).app"
 	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f $(INSTALL_DIR)/$(BINARY_NAME).app
 	@echo "Registered with Launch Services (.zpl file association)"
-	sed 's|/Users/david/striped-printer/.build/StripedPrinter.app/Contents/MacOS/StripedPrinter|$(INSTALL_DIR)/$(BINARY_NAME).app/Contents/MacOS/$(BINARY_NAME)|' \
-		$(PLIST_SRC) > $(PLIST_DEST)
-	launchctl bootstrap gui/$$(id -u) $(PLIST_DEST)
-	@echo "LaunchAgent loaded — $(BINARY_NAME) is running"
+	open $(INSTALL_DIR)/$(BINARY_NAME).app
+	@echo "Launched — click the menu bar icon and choose 'Open at Login' to auto-start"
 
 # --- Uninstall ---
 
 .PHONY: uninstall
 uninstall:
-	-launchctl bootout gui/$$(id -u) $(PLIST_DEST) 2>/dev/null
-	rm -f $(PLIST_DEST)
+	-pkill -f $(INSTALL_DIR)/$(BINARY_NAME).app 2>/dev/null
 	rm -rf $(INSTALL_DIR)/$(BINARY_NAME).app
 	@echo "Uninstalled $(BINARY_NAME)"
 

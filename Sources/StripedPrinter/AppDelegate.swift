@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import os
 
 private let logger = Logger(subsystem: "com.striped-printer", category: "App")
@@ -119,6 +120,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let refresh = NSMenuItem(title: "Refresh Bonjour", action: #selector(refreshDiscovery), keyEquivalent: "r")
             refresh.target = self
             menu.addItem(refresh)
+
+            menu.addItem(.separator())
+
+            let loginItem = NSMenuItem(title: "Open at Login", action: #selector(toggleLoginItem), keyEquivalent: "")
+            loginItem.target = self
+            loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
+            menu.addItem(loginItem)
 
             if !printerManager.manualPrinters.isEmpty {
                 menu.addItem(.separator())
@@ -262,6 +270,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.scheduleMenuRebuild()
                 }
             }
+        }
+    }
+
+    @objc private func toggleLoginItem() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+            } else {
+                try service.register()
+            }
+            scheduleMenuRebuild()
+        } catch {
+            logger.error("Login item toggle failed: \(error.localizedDescription)")
+            let alert = NSAlert()
+            alert.messageText = "Couldn't Update Login Item"
+            alert.informativeText = error.localizedDescription
+            alert.alertStyle = .warning
+            alert.runModal()
         }
     }
 

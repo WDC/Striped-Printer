@@ -32,19 +32,22 @@ class StripedPrinter < Formula
 
   def caveats
     <<~EOS
+      Launch the app once to start it and enable auto-start at login:
+        open #{opt_prefix}/StripedPrinter.app
+
+      Then click the printer icon in your menu bar and choose
+      "Open at Login" to have it start automatically.
+
+      Note: macOS 26 requires menu bar apps to be launched via
+      Launch Services (not `brew services`), which is why this
+      formula no longer registers a launchd agent.
+
       To open .zpl files with Striped Printer by default:
         brew install duti
         duti -s com.striped-printer .zpl all
 
       Or right-click any .zpl file → Open With → Striped Printer → Always Open With.
     EOS
-  end
-
-  service do
-    run [opt_bin/"StripedPrinter"]
-    keep_alive true
-    log_path var/"log/striped-printer.log"
-    error_log_path var/"log/striped-printer.log"
   end
 
   test do
