@@ -6,8 +6,10 @@
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>StripedPrinter</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
     <key>CFBundleIdentifier</key>
-    <string>com.striped-printer</string>
+    <string>com.delcoe.stripedprinter</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -26,6 +28,12 @@
     <string>13.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Striped Printer discovers Zebra printers on your local network and sends print jobs to them over TCP.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_pdl-datastream._tcp</string>
+    </array>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

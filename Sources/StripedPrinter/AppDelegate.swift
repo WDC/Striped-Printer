@@ -26,7 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             printerManager.startDiscovery()
             startServers()
 
-            // Auto-scan local subnets for printers on port 9100
             let subnets = PrinterManager.getLocalNetworkInfo().subnets
             if !subnets.isEmpty {
                 printerManager.scanSubnets(subnets)
@@ -41,9 +40,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupStatusBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.autosaveName = "com.delcoe.stripedprinter.menubar"
 
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "printer.fill", accessibilityDescription: "Striped Printer")
+            let image = NSImage(systemSymbolName: "printer.fill", accessibilityDescription: "Striped Printer")
+            image?.isTemplate = true
+            button.image = image
+            button.toolTip = "Striped Printer"
         }
 
         rebuildMenu()
